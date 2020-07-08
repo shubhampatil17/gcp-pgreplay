@@ -3,6 +3,7 @@ import google.auth
 import re
 import sys
 import warnings
+import time
 
 from google.cloud import logging
 from datetime import datetime, timedelta
@@ -39,12 +40,12 @@ def print_log(data, sink):
         print(data["sql"], file=sink)
 
 
-def print_formatted_current(current, next, sink):
+def print_formatted_current(current_log, next_log, sink):
     parsed_args = {}
 
-    if next["action"] == "parameters":
-        temp_sql = next["sql"]
-        key_args = [int(x.strip('$')) for x in re.findall("\$\d+", current["sql"])]
+    if next_log["action"] == "parameters":
+        temp_sql = next_log["sql"]
+        key_args = [int(x.strip('$')) for x in re.findall("\$\d+", current_log["sql"])]
         for idx, key in enumerate(key_args):
             current_arg = "${pos} = ".format(pos=key)
             next_arg = "${pos} = ".format(pos=(key + 1))
@@ -58,9 +59,9 @@ def print_formatted_current(current, next, sink):
 
         for key in sorted(key_args, reverse=True):
             arg = "$" + str(key)
-            current["sql"] = current["sql"].replace(arg, parsed_args[arg])
+            current_log["sql"] = current_log["sql"].replace(arg, parsed_args[arg])
 
-    print_log(current, sink)
+    print_log(current_log, sink)
 
 
 def generate_query_filter(args):
@@ -82,35 +83,46 @@ def generate_logs(args):
     logging_client = logging.Client(credentials=credentials)
 
     with args["output"] as out:
-        current, next = None, None
+        current_log, next_log = None, None
         filters = generate_query_filter(args)
-        for entry in logging_client.list_entries(projects=[args["project"]], filter_=filters):
-            payload = entry.to_api_repr()['textPayload']
-            splits = payload.split(log_splitter)
+        iterator = logging_client.list_entries(projects=[args["project"]], filter_=filters)
+        pages = iterator.pages
 
-            data = {
-                "pid": splits[0].strip(),
-                "group": splits[1].strip(),
-                "action": splits[2].strip(),
-                "sql": log_splitter.join(splits[3:]).strip()
-            }
+        while True:
+            try:
+                page = next(pages)
+            except StopIteration as e:
+                break
 
-            if next is None:
-                if current is None:
-                    current = data
+            for entry in page:
+                payload = entry.to_api_repr()['textPayload']
+                splits = payload.split(log_splitter)
+
+                data = {
+                    "pid": splits[0].strip(),
+                    "group": splits[1].strip(),
+                    "action": splits[2].strip(),
+                    "sql": log_splitter.join(splits[3:]).strip()
+                }
+
+                if next_log is None:
+                    if current_log is None:
+                        current_log = data
+                    else:
+                        next_log = data
+                        print_formatted_current(current_log, next_log, out)
+
                 else:
-                    next = data
-                    print_formatted_current(current, next, out)
+                    current_log = next_log
+                    next_log = data
+                    print_formatted_current(current_log, next_log, out)
 
-            else:
-                current = next
-                next = data
-                print_formatted_current(current, next, out)
+            time.sleep(1)
 
-        if current is not None and next is None:
-            print_log(current, out)
-        elif next is not None:
-            print_log(next, out)
+        if current_log is not None and next_log is None:
+            print_log(current_log, out)
+        elif next_log is not None:
+            print_log(next_log, out)
 
 
 if __name__ == "__main__":
