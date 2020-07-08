@@ -85,7 +85,7 @@ def generate_logs(args):
     with args["output"] as out:
         current_log, next_log = None, None
         filters = generate_query_filter(args)
-        iterator = logging_client.list_entries(projects=[args["project"]], filter_=filters)
+        iterator = logging_client.list_entries(projects=[args["project"]], filter_=filters, page_size=args["page_size"])
         pages = iterator.pages
 
         while True:
@@ -117,7 +117,7 @@ def generate_logs(args):
                     next_log = data
                     print_formatted_current(current_log, next_log, out)
 
-            time.sleep(1)
+            time.sleep(args["delay"])
 
         if current_log is not None and next_log is None:
             print_log(current_log, out)
@@ -136,18 +136,23 @@ if __name__ == "__main__":
     mandatory_group.add_argument("-p", "--project", dest="project", help="Google Cloud Project Id", required=True)
 
     parser.add_argument("-h", "--host", dest="host", help="Google Cloud SQL Hostname")
-    parser.add_argument("-d", "--database", dest="database", help="Google Cloud SQL Postgres Database")
+    parser.add_argument("-d", "--database", dest="database", help="Google Cloud SQL postgres instance name")
     parser.add_argument("-u", "--user", dest="user", action="append", help="Google Cloud SQL Postgres User")
-    parser.add_argument("-st", "--startTime", dest="start_time",
+    parser.add_argument("-st", "--start-time", dest="start_time",
                         action=DatetimeParseAction,
                         default=(datetime.now() - timedelta(days=7)).strftime(logging_df),
                         help="Start time in standard ISO format. Defaults to 7 days ago.")
-    parser.add_argument("-et", "--endTime", dest="end_time",
+    parser.add_argument("-et", "--end-time", dest="end_time",
                         action=DatetimeParseAction, default=datetime.now().strftime(logging_df),
                         help="End time in standard ISO format. Defaults to now.")
     parser.add_argument("-o", "--output", dest="output", type=argparse.FileType('w'), default=sys.stdout,
                         help="Output file to write in.")
-    parser.add_argument("-c", "--customFilter", dest="custom_filters", help="Custom filters to add to the query")
+    parser.add_argument("-c", "--custom-filter", dest="custom_filters", help="Custom filters to add to the query")
+    parser.add_argument("-p", "--page-size", dest="page_size", type=int, default=10,
+                        help="Page size to fetch in a single API call (number of records)")
+    parser.add_argument("-w", "--wait", dest="delay", type=int, default=1,
+                        help="Delay between API calls (in seconds)")
+    parser.add_argument("-v", "--verbose", dest="verbose_mode", action="store_true")
 
     args = parser.parse_args()
     generate_logs(vars(args))
