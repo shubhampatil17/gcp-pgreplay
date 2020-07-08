@@ -7,9 +7,6 @@ import warnings
 from google.cloud import logging
 from datetime import datetime, timedelta
 
-# pip install --upgrade google-auth-oauthlib
-# pip install --upgrade google-cloud-logging
-
 # Disable this based on user flag
 warnings.filterwarnings("ignore")
 
@@ -73,7 +70,10 @@ def generate_query_filter(args):
               '("LOG:" OR "DETAIL:")'
 
     filters += ' AND resource.labels.database_id="{project}:{host}"' if args["host"] is not None else ''
-    filters += ' AND ("db={database},user={user}")' if args["database"] is not None and args["user"] is not None else ''
+    filters += ' AND ({})'.format(" OR ".join(['"db={database},user={user}"'
+                                              .format(database=args["database"], user=user)
+                                               for user in set(args["user"])]))
+    filters += ' AND ({custom_filters})' if args["custom_filters"] is not None else ''
     return filters.format(**args)
 
 
@@ -84,7 +84,6 @@ def generate_logs(args):
     with args["output"] as out:
         current, next = None, None
         filters = generate_query_filter(args)
-
         for entry in logging_client.list_entries(projects=[args["project"]], filter_=filters):
             payload = entry.to_api_repr()['textPayload']
             splits = payload.split(log_splitter)
@@ -116,7 +115,7 @@ def generate_logs(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="A command line utility to fetch Google Cloud SQL (Postgres) transaction logs. "
+        description="A disaster recovery command line utility to fetch Google Cloud SQL (Postgres) transaction logs."
                     "Default date range is set to last 7 days.",
         conflict_handler="resolve",
         epilog="Report bugs at patil.sm17@gmail.com")
@@ -126,7 +125,7 @@ if __name__ == "__main__":
 
     parser.add_argument("-h", "--host", dest="host", help="Google Cloud SQL Hostname")
     parser.add_argument("-d", "--database", dest="database", help="Google Cloud SQL Postgres Database")
-    parser.add_argument("-u", "--user", dest="user", help="Google Cloud SQL Postgres User")
+    parser.add_argument("-u", "--user", dest="user", action="append", help="Google Cloud SQL Postgres User")
     parser.add_argument("-st", "--startTime", dest="start_time",
                         action=DatetimeParseAction,
                         default=(datetime.now() - timedelta(days=7)).strftime(logging_df),
@@ -136,6 +135,7 @@ if __name__ == "__main__":
                         help="End time in standard ISO format. Defaults to now.")
     parser.add_argument("-o", "--output", dest="output", type=argparse.FileType('w'), default=sys.stdout,
                         help="Output file to write in.")
+    parser.add_argument("-c", "--customFilter", dest="custom_filters", help="Custom filters to add to the query")
 
     args = parser.parse_args()
     generate_logs(vars(args))
