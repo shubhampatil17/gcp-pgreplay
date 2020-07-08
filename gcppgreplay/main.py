@@ -4,6 +4,7 @@ import re
 import sys
 import warnings
 import time
+import logging as log
 
 from google.cloud import logging
 from datetime import datetime, timedelta
@@ -32,6 +33,14 @@ class DatetimeParseAction(argparse.Action):
             setattr(namespace, self.dest, ts.strftime(logging_df))
         except Exception as e:
             raise argparse.ArgumentError(self, e)
+
+
+def reset_verbose_mode(args):
+    log_format = "%(levelname)s: %(message)s"
+    if args["verbose"]:
+        log.basicConfig(format=log_format, level=log.DEBUG)
+    else:
+        log.basicConfig(format=log_format)
 
 
 def print_log(data, sink):
@@ -85,6 +94,8 @@ def generate_logs(args):
     with args["output"] as out:
         current_log, next_log = None, None
         filters = generate_query_filter(args)
+        log.debug("Using gcloud read filters : '%s'", filters)
+
         iterator = logging_client.list_entries(projects=[args["project"]], filter_=filters, page_size=args["page_size"])
         pages = iterator.pages
 
@@ -133,7 +144,7 @@ if __name__ == "__main__":
         epilog="Report bugs at patil.sm17@gmail.com")
 
     mandatory_group = parser.add_argument_group("mandatory arguments", "Args that must be supplied")
-    mandatory_group.add_argument("-p", "--project", dest="project", help="Google Cloud Project Id", required=True)
+    mandatory_group.add_argument("-P", "--project", dest="project", help="Google Cloud Project Id", required=True)
 
     parser.add_argument("-h", "--host", dest="host", help="Google Cloud SQL Hostname")
     parser.add_argument("-d", "--database", dest="database", help="Google Cloud SQL postgres instance name")
@@ -152,7 +163,9 @@ if __name__ == "__main__":
                         help="Page size to fetch in a single API call (number of records)")
     parser.add_argument("-w", "--wait", dest="delay", type=int, default=1,
                         help="Delay between API calls (in seconds)")
-    parser.add_argument("-v", "--verbose", dest="verbose_mode", action="store_true")
+    parser.add_argument("-v", "--verbose", dest="verbose", action="store_true", help="Verbose mode (shows debug logs)")
 
-    args = parser.parse_args()
-    generate_logs(vars(args))
+    args = vars(parser.parse_args())
+
+    reset_verbose_mode(args)
+    generate_logs(args)
