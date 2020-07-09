@@ -95,15 +95,15 @@ def merge_payloads(first_payload, next_payload, merge_index, relaxed=False):
     if first_match is None and next_match is None:
         first_payload += next_payload
 
-    elif first_match is not None and next_match is not None and (not relaxed) and \
+    elif first_match is not None and next_match is not None and \
             int(first_match.group("part")) == 1 and int(next_match.group("part")) == (merge_index + 1):
         first_payload += re.split(log_part_pattern, next_payload, maxsplit=1)[-1]
 
-    elif relaxed:
-        first_payload += re.split(log_part_pattern, next_payload, maxsplit=1)[-1] \
-            if next_match is not None else next_payload
     else:
-        # merge went out of sync
+        if relaxed:
+            first_payload += re.split(log_part_pattern, next_payload, maxsplit=1)[-1] \
+                if next_match is not None else next_payload
+
         return first_payload, False
 
     return first_payload, True
