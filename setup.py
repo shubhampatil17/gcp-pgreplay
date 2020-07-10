@@ -47,7 +47,8 @@ setup(
     install_requires=[
         'argparse',
         'google-auth-oauthlib',
-        'google-cloud-logging'
+        'google-cloud-logging',
+        'pgsanity'
     ],
     cmdclass={'test': PyTest},
     author_email='patil.sm17@gmail.com',

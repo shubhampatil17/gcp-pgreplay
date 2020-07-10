@@ -8,6 +8,7 @@ import logging as log
 
 from google.cloud import logging
 from datetime import datetime, timedelta
+from pgsanity import pgsanity
 
 # Disable this based on user flag
 warnings.filterwarnings("ignore")
@@ -19,7 +20,7 @@ log_part_pattern = r"^(\((?P<part>\d+)/(?P<parts>\d+)\)\s)"
 opt_log_part_pattern = log_part_pattern + r"?"
 log_identity_pattern = opt_log_part_pattern + r"\[\d+\]:\s\[\d+-\d+]\sdb=({database}),user=({users})"
 req_init_pattern = log_identity_pattern + r"\s(LOG|DETAIL)"
-log_init_pattern = log_identity_pattern.format(database=r"\S+", users=r"\S+")
+log_init_pattern = log_identity_pattern.format(database=r"\S*", users=r"\S*")
 merge_conflict_wrapper = "-- <Merge Conflict: Start>\n{}\n-- <Merge Conflict: End>"
 
 
@@ -46,7 +47,7 @@ def reset_verbose_mode(args):
         log.basicConfig(format=log_format)
 
 
-def print_formatted_current(current_log, next_log, sink, current_sync, next_sync):
+def print_formatted_current(current_log, next_log, sink, current_sync, next_sync, validate=False):
     if current_log is None or next_log is None:
         return
 
@@ -74,8 +75,14 @@ def print_formatted_current(current_log, next_log, sink, current_sync, next_sync
 
         sql = current_log["sql"]
         sql = sql + ";" if sql[-1] != ";" else sql
-        sql = merge_conflict_wrapper.format(sql) if is_conflict else sql
-        print(sql, file=sink)
+
+        valid, _ = pgsanity.check_string(sql)
+
+        if not validate or valid:
+            sql = merge_conflict_wrapper.format(sql) if is_conflict else sql
+            print(sql, file=sink)
+        else:
+            log.warning("Skipping as identified invalid SQL syntax : %s", current_log)
 
 
 def generate_query_filter(args):
@@ -127,10 +134,11 @@ def generate_logs(args):
     credentials, project = google.auth.default()
     logging_client = logging.Client(credentials=credentials)
     filters = generate_query_filter(args)
+    relax_mode, validate_sql = args["relaxed"], args["validate"]
     log.debug("gCloud Query Filters : '%s'", filters)
 
     with args["output"] as out:
-        args["users"] = r"\S+" if args["users"] is None else r"|".join([u for u in set(args["users"])])
+        args["users"] = r"\S*" if args["users"] is None else r"|".join([u for u in set(args["users"])])
         query_init_pattern = req_init_pattern.format(**args)
         log.debug("Log Init Pattern : %s", log_init_pattern)
         log.debug("Query Init Pattern : %s", query_init_pattern)
@@ -164,7 +172,7 @@ def generate_logs(args):
                     is_req_init = (re.match(query_init_pattern, curr_entry[payload]) is not None)
                     if is_req_init:
                         print_formatted_current(get_data_node(prev_req_log), get_data_node(curr_req_log), out,
-                                                prev_msync, curr_msync)
+                                                prev_msync, curr_msync, validate_sql)
 
                         prev_msync = curr_msync
                         prev_req_log = curr_req_log
@@ -172,24 +180,25 @@ def generate_logs(args):
                         curr_req_log = curr_entry
 
                 else:
-                    if is_req_init and curr_msync:
+                    if is_req_init:
                         curr_req_log[payload], curr_msync = merge_payloads(curr_req_log[payload], curr_entry[payload],
-                                                                           merge_index, relaxed=args["relaxed"])
+                                                                           merge_index, relaxed=relax_mode)
                         merge_index += 1
 
-                    if not curr_msync:
-                        if args["silent"]:
-                            log.error("Merger is out of sync for entry: %s", curr_entry)
-                        else:
-                            raise RuntimeError("Merger is out of sync !")
+                        if not curr_msync:
+                            if args["silent"]:
+                                log.error("Merger is out of sync for entry: %s", curr_entry)
+                            else:
+                                raise RuntimeError("Merger is out of sync !")
 
             time.sleep(args["delay"])
 
         if prev_req_log != curr_req_log:
             print_formatted_current(get_data_node(prev_req_log), get_data_node(curr_req_log), out, prev_msync,
-                                    curr_msync)
+                                    curr_msync, validate_sql)
 
-        print_formatted_current(get_data_node(curr_req_log), get_data_node(curr_req_log), out, curr_msync, curr_msync)
+        print_formatted_current(get_data_node(curr_req_log), get_data_node(curr_req_log), out, curr_msync, curr_msync,
+                                validate_sql)
 
 
 if __name__ == "__main__":
@@ -225,6 +234,8 @@ if __name__ == "__main__":
                         help="Silent mode (log and ignore merge errors silently). Marks merge conflicts")
     parser.add_argument("-r", "--relaxed", dest="relaxed", action="store_true",
                         help="Relaxed mode (use relaxed mode for merging algorithm).")
+    parser.add_argument("-V", "--validate", dest="validate", action="store_true",
+                        help="Validate mode (prevent recording invalid SQL queries).")
 
     args = vars(parser.parse_args())
     reset_verbose_mode(args)
