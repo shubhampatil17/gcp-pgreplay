@@ -76,13 +76,17 @@ def print_formatted_current(current_log, next_log, sink, current_sync, next_sync
         sql = current_log["sql"]
         sql = sql + ";" if sql[-1] != ";" else sql
 
-        valid, _ = pgsanity.check_string(sql)
+        valid_stmt = True
 
-        if not validate or valid:
-            sql = merge_conflict_wrapper.format(sql) if is_conflict else sql
-            print(sql, file=sink)
-        else:
+        if validate:
+            valid_stmt, _ = pgsanity.check_string(sql)
+
+        if not valid_stmt:
+            sql = '-- {}'.format(sql)
             log.warning("Skipping as identified invalid SQL syntax : %s", current_log)
+
+        sql = merge_conflict_wrapper.format(sql) if is_conflict else sql
+        print(sql, file=sink)
 
 
 def generate_query_filter(args):
@@ -224,7 +228,7 @@ if __name__ == "__main__":
                         help="End time in standard UTC format. Defaults to now.")
     parser.add_argument("-o", "--output", dest="output", type=argparse.FileType('w'), default=sys.stdout,
                         help="Output file to write in.")
-    parser.add_argument("-c", "--custom-filters", dest="custom_filters", help="Custom filters to add to the query")
+    parser.add_argument("-f", "--custom-filters", dest="custom_filters", help="Custom filters to add to the query")
     parser.add_argument("-p", "--page-size", dest="page_size", type=int, default=100,
                         help="Page size to fetch in a single API call (number of records)")
     parser.add_argument("-w", "--wait", dest="delay", type=int, default=2,
